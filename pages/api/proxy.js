@@ -1,81 +1,106 @@
-// pages/api/proxy.js
-
 import { gotScraping } from 'got-scraping';
 
-// 定义支持伪造的浏览器选项
+// 支持的浏览器/设备/系统列表
 const SUPPORTED_BROWSERS = ['chrome', 'firefox', 'safari'];
+const SUPPORTED_DEVICES = ['desktop', 'mobile'];
+const SUPPORTED_OS = ['windows', 'macos', 'linux', 'android', 'ios'];
+
+// 可配置：你允许哪些验证参数名
+const VALID_AUTH_KEYS = ['x-proxy-token', 'x-api-key'];
+
+// 验证
+function isAuthorized(req) {
+  // 支持多种验证头，按需添加
+  for (const key of VALID_AUTH_KEYS) {
+    if (req.headers[key] && req.headers[key] === process.env.PROXY_AUTH_TOKEN) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// 统一获取参数（GET/POST 兼容）
+function getParam(req, key, fallback = undefined) {
+  if (req.method === 'GET') return req.query[key] ?? fallback;
+  if (req.method === 'POST') return req.body?.[key] ?? fallback;
+  return fallback;
+}
 
 export default async function handler(req, res) {
-    // 1. 认证：检查代理访问令牌 (保持不变)
-    const requiredToken = process.env.PROXY_AUTH_TOKEN;
-    if (req.headers['x-proxy-token'] !== requiredToken) {
-        return res.status(401).json({ error: 'Unauthorized: Missing or incorrect X-Proxy-Token.' });
-    }
+  // 1. 验证身份
+  if (!isAuthorized(req)) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid or missing token.' });
+  }
 
-    // 只接受 POST 方法，因为所有参数都通过请求体传递
-    if (req.method !== 'POST') {
-        res.setHeader('Allow', 'POST');
-        return res.status(405).json({ error: 'Method Not Allowed. Please use POST.' });
-    }
+  // 2. 支持 GET / POST
+  const method = req.method === 'POST'
+    ? req.body?.method || 'GET'
+    : getParam(req, 'method', 'GET');
 
-    // 2. 解析客户端传入的、更详细的请求参数
-    const {
-        url: targetUrl,
-        method = 'GET',
-        headers: customHeaders = {},
-        body: requestBody = null,
-        proxyOptions = {}
-    } = req.body;
+  const targetUrl = getParam(req, 'url');
+  if (!targetUrl || !/^https?:\/\//i.test(targetUrl)) {
+    return res.status(400).json({ error: 'A valid "url" parameter is required.' });
+  }
 
-    if (!targetUrl || !targetUrl.startsWith('http')) {
-        return res.status(400).json({ error: 'A valid "url" field is required in the request body.' });
-    }
+  // 指纹参数
+  const browser = SUPPORTED_BROWSERS.includes(getParam(req, 'browser')) ? getParam(req, 'browser') : 'chrome';
+  const device = SUPPORTED_DEVICES.includes(getParam(req, 'device')) ? getParam(req, 'device') : 'desktop';
+  const os = SUPPORTED_OS.includes(getParam(req, 'os')) ? getParam(req, 'os') : 'windows';
 
-    // 3. 构建 got-scraping 的请求选项
-    const options = {
-        method: method,
-        responseType: 'buffer', // 关键：始终以二进制Buffer形式接收响应，以支持所有文件类型
-        throwHttpErrors: false, // 我们自己处理HTTP错误，而不是让库抛出
-        headers: customHeaders, // 应用客户端传入的自定义header
-        body: requestBody ? JSON.stringify(requestBody) : undefined, // 如果有body，则stringfy
-        
-        // 【核心】根据客户端传入的参数，动态配置浏览器指纹
-        headerGeneratorOptions: {
-            browsers: [{
-                name: SUPPORTED_BROWSERS.includes(proxyOptions.browser) ? proxyOptions.browser : 'chrome',
-                minVersion: 110,
-            }],
-            devices: [proxyOptions.device || 'desktop'],
-            operatingSystems: [proxyOptions.os || 'windows'],
-        }
-    };
+  // 自定义 header 支持
+  let customHeaders = {};
+  try {
+    const h = getParam(req, 'headers');
+    if (h && typeof h === 'object') customHeaders = h;
+    else if (typeof h === 'string') customHeaders = JSON.parse(h);
+  } catch (e) {
+    // 忽略解析错误
+  }
 
-    console.log(`[Proxy] Forwarding ${method} request to ${targetUrl} with spoofed fingerprint...`);
+  // 请求体
+  let requestBody = getParam(req, 'body');
+  if (requestBody && typeof requestBody === 'object') {
+    requestBody = JSON.stringify(requestBody);
+  }
 
-    try {
-        // 4. 使用 gotScraping 发起请求
-        const response = await gotScraping(targetUrl, options);
+  // gotScraping 选项
+  const options = {
+    method,
+    responseType: 'buffer', // 支持二进制/文本/流媒体
+    throwHttpErrors: false,
+    headers: customHeaders,
+    body: ['POST', 'PUT', 'PATCH'].includes(method.toUpperCase()) ? requestBody : undefined,
+    headerGeneratorOptions: {
+      browsers: [{ name: browser, minVersion: 110 }],
+      devices: [device],
+      operatingSystems: [os],
+    },
+    timeout: { request: 20000 }, // 20秒超时
+    retry: 0, // 不自动重试
+  };
 
-        // 5. 智能地将目标响应转发回客户端
-        
-        // 复制目标服务器的 Content-Type
-        const contentType = response.headers['content-type'] || 'application/octet-stream';
-        res.setHeader('Content-Type', contentType);
+  try {
+    const response = await gotScraping(targetUrl, options);
 
-        // 复制其他必要的响应头
-        // (可以根据需要添加更多要透传的头)
-        if (response.headers['content-disposition']) {
-            res.setHeader('Content-Disposition', response.headers['content-disposition']);
-        }
-        if (response.headers['content-length']) {
-            res.setHeader('Content-Length', response.headers['content-length']);
-        }
+    // 透传目标服务器的关键响应头
+    const contentType = response.headers['content-type'] || 'application/octet-stream';
+    res.setHeader('Content-Type', contentType);
 
-        // 设置响应状态码并发送响应体 (Buffer)
-        res.status(response.statusCode).send(response.body);
+    // 仅白名单透传少量头部
+    ['content-disposition', 'content-length', 'accept-ranges', 'cache-control'].forEach((key) => {
+      if (response.headers[key]) {
+        res.setHeader(key, response.headers[key]);
+      }
+    });
 
-    } catch (error) {
-        console.error('[PROXY_ERROR]', error);
-        res.status(502).json({ error: 'Proxy request execution failed.', details: error.message });
-    }
+    // 状态码
+    res.status(response.statusCode);
+
+    // 响应体
+    res.send(response.body);
+
+  } catch (error) {
+    res.status(502).json({ error: 'Proxy request failed.', details: error.message });
+  }
 }
+
