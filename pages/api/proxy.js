@@ -8,15 +8,13 @@ const SUPPORTED_OS = ['windows', 'macos', 'linux', 'android', 'ios'];
 // 可配置：你允许哪些验证参数名
 const VALID_AUTH_KEYS = ['x-proxy-token', 'x-api-key'];
 
-// 验证
+// 验证 支持 header 和 query 方式
 function isAuthorized(req) {
-  // 支持多种验证头，按需添加
-  for (const key of VALID_AUTH_KEYS) {
-    if (req.headers[key] && req.headers[key] === process.env.PROXY_AUTH_TOKEN) {
-      return true;
-    }
-  }
-  return false;
+  const token =
+    req.headers['x-proxy-token'] ||
+    req.query.token ||
+    req.body?.token;
+  return token === process.env.PROXY_AUTH_TOKEN;
 }
 
 // 统一获取参数（GET/POST 兼容）
