@@ -1,37 +1,22 @@
 # netlify.toml
 
-# This section defines the build settings for your project.
-# It tells Netlify how to build your Next.js site.
+# 1. 构建配置
 [build]
-  # The command to build your Next.js project.
   command = "next build"
-  
-  # The directory that contains the built site. For Next.js, this is .next.
   publish = ".next"
 
-# This section sets environment variables for the build and for functions.
+# 2. 环境变量
 [build.environment]
-  # This is the correct way to specify the Node.js version for your entire environment.
   NODE_VERSION = "20"
 
-# This section contains settings for your Netlify Functions.
+# 3. Functions (函数) 通用配置
 [functions]
-  # This specifies that your functions should be bundled using esbuild.
+  # 我们只保留打包器配置，移除 external_node_modules
   node_bundler = "esbuild"
-  
-  # This excludes 'got-scraping' from the bundling process, which is necessary
-  # because it is an ESM-only package. The function will use the version
-  # from your node_modules directly.
-  external_node_modules = ["got-scraping"]
 
-# This section defines rewrite and redirect rules.
-# Double brackets [[ ]] are used because you can have multiple redirect rules.
+# 4. 重定向规则
 [[redirects]]
-  # The incoming path on your site.
   from = "/api/proxy"
-  
-  # The Netlify Function to execute for that path.
   to = "/.netlify/functions/proxy"
-  
-  # A status of 200 makes this a rewrite (the user's URL doesn't change).
   status = 200
+  force = true
