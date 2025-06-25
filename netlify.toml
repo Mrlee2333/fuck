@@ -1,6 +1,19 @@
+# netlify.toml
+
+# 针对所有 functions 的通用配置
+[functions]
+  node_bundler = "esbuild"
+  # 指定一个支持ESM的较新Node版本
+  node_version = 20 
+
 [[redirects]]
   from = "/api/proxy"
   to = "/.netlify/functions/proxy"
   status = 200
   force = true
 
+# 针对 proxy function 的特殊配置
+[[functions.proxy]]
+  # 【关键】将这些模块排除在打包过程之外
+  # 让运行时环境直接加载它们
+  external_node_modules = ["got-scraping"]
