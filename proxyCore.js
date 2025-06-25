@@ -44,9 +44,8 @@ function getAndValidatePayload(req) {
 }
 
 
-// --- Netlify 使用的轻量级 Fetch 代理引擎 (保持不变) ---
+// --- Netlify 使用的 fetch 二进制增强代理 ---
 async function runNetlifySimpleProxy({ req, url, method, headers, body }) {
-  console.log('[Netlify Engine] Running simple proxy with native fetch...');
   try {
     const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
     const requestHeaders = new Headers(headers);
@@ -60,18 +59,24 @@ async function runNetlifySimpleProxy({ req, url, method, headers, body }) {
       body: (method !== 'GET' && method !== 'HEAD') ? body : undefined,
     });
 
+    // 移除 content-encoding
     const responseHeaders = {};
-    response.headers.forEach((value, key) => { responseHeaders[key] = value; });
+    response.headers.forEach((value, key) => {
+      if (key.toLowerCase() !== 'content-encoding') {
+        responseHeaders[key] = value;
+      }
+    });
+
+    // 用 arrayBuffer，支持图片、音视频等二进制
+    const buffer = Buffer.from(await response.arrayBuffer());
 
     return {
       statusCode: response.status,
       headers: responseHeaders,
-      body: await response.text(),
-      isBase64Encoded: false,
+      body: buffer, // 上层代码判断 content-type 决定是否转 base64
     };
 
   } catch (error) {
-    console.error('[Netlify Engine] Fetch proxy error:', error);
     return {
       statusCode: 502,
       headers: { 'Content-Type': 'application/json' },
@@ -79,6 +84,8 @@ async function runNetlifySimpleProxy({ req, url, method, headers, body }) {
     };
   }
 }
+
+
 
 // --- Vercel 使用的 got-scraping 高级代理引擎 (增强版) ---
 async function runVercelAdvancedProxy({ req, res, url, method, headers, body }) {
@@ -158,3 +165,4 @@ export async function proxyCore({ req, res, platform }) {
     await runVercelAdvancedProxy({ req, res, url, method, headers, body });
   }
 }
+
