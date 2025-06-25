@@ -11,8 +11,12 @@
 
 # 3. Functions (函数) 通用配置
 [functions]
-  # 我们只保留打包器配置，移除 external_node_modules
   node_bundler = "esbuild"
+  
+  # 【最终修复】
+  # 路径已更正为 header-generator 包的根目录下的 data_files 目录。
+  # "/**" 通配符会包含该目录下的所有文件 (json, zip 等)。
+  included_files = ["node_modules/header-generator/data_files/**"]
 
 # 4. 重定向规则
 [[redirects]]
