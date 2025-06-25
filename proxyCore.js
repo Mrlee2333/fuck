@@ -6,25 +6,33 @@ const SUPPORTED_OS = ['windows', 'macos', 'linux', 'android', 'ios'];
 const SUPPORTED_DEVICES = ['desktop', 'mobile'];
 const SUPPORTED_LOCALES = ['en-US', 'en', 'zh-CN', 'ja-JP'];
 
+/**
+ * 从数组中随机选取一个元素
+ * @param {Array<T>} arr
+ * @returns {T}
+ */
 function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
 // --- 参数净化与验证 ---
-function getAndValidatePayload(req) {
-  let rawPayload = {};
-  if (req.method === 'POST') {
-    // 兼容Buffer、JSON对象和普通字符串
-    rawPayload = typeof req.body === 'object' && req.body !== null ? req.body : {};
-  } else {
-    rawPayload = req.query || {};
-  }
 
-  if (!rawPayload.url || typeof rawPayload.url !== 'string' || !rawPayload.url.startsWith('http')) {
+/**
+ * 从请求中提取并验证代理所需参数
+ * @param {object} req - Node.js风格的请求对象
+ * @returns {{payload?: object, error?: string}}
+ */
+function getAndValidatePayload(req) {
+  const isPost = req.method === 'POST';
+  // Vercel/Next.js 自动解析 body，我们直接使用。
+  // Netlify 适配器中已将 event.body 转换为 req.body
+  const rawPayload = isPost ? (req.body || {}) : (req.query || {});
+
+  const url = typeof rawPayload.url === 'string' ? rawPayload.url : '';
+  if (!url.startsWith('http')) {
     return { error: 'A valid "url" parameter starting with http(s) is required.' };
   }
 
-  const url = rawPayload.url;
   const method = (typeof rawPayload.method === 'string' ? rawPayload.method : 'GET').toUpperCase();
 
   const headers = {};
@@ -37,9 +45,11 @@ function getAndValidatePayload(req) {
   }
 
   let body = rawPayload.body;
+  // 如果 body 是 JSON 对象（且非 Buffer），则序列化
   if (typeof body === 'object' && body !== null && !Buffer.isBuffer(body)) {
     body = JSON.stringify(body);
-    if (method === 'POST' && !headers['content-type']) {
+    // 如果是 POST 请求且未指定 Content-Type，则默认为 JSON
+    if (isPost && !headers['content-type']) {
       headers['content-type'] = 'application/json';
     }
   }
@@ -51,8 +61,9 @@ function getAndValidatePayload(req) {
 // --- Netlify 代理引擎 (基于 Fetch API) ---
 async function runNetlifySimpleProxy({ req, url, method, headers, body }) {
   try {
-    const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+    const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
     const requestHeaders = new Headers(headers);
+
     if (!requestHeaders.has('user-agent')) requestHeaders.set('User-Agent', userAgent);
     if (req.headers.cookie && !requestHeaders.has('cookie')) requestHeaders.set('Cookie', req.headers.cookie);
     if (req.headers.referer && !requestHeaders.has('referer')) requestHeaders.set('Referer', req.headers.referer);
@@ -61,18 +72,17 @@ async function runNetlifySimpleProxy({ req, url, method, headers, body }) {
       method,
       headers: requestHeaders,
       body: (method !== 'GET' && method !== 'HEAD') ? body : undefined,
-      redirect: 'follow', // 自动处理重定向
+      redirect: 'follow',
     });
 
     const responseHeaders = {};
     response.headers.forEach((value, key) => {
-      // Netlify会自动处理压缩，因此移除此头，避免客户端二次解压失败
+      // 移除 content-encoding，因为 Netlify 会自动处理压缩
       if (key.toLowerCase() !== 'content-encoding') {
         responseHeaders[key] = value;
       }
     });
 
-    // 返回 Buffer，由上层适配器决定如何编码 (如 base64)
     const buffer = Buffer.from(await response.arrayBuffer());
 
     return {
@@ -89,68 +99,52 @@ async function runNetlifySimpleProxy({ req, url, method, headers, body }) {
   }
 }
 
-// --- Vercel/本地 代理引擎 (基于 got-scraping 流式处理) ---
-async function runVercelAdvancedProxy({ req, res, url, method, headers, body, corsHeaders }) {
+// --- Vercel/本地 代理引擎 (基于 got-scraping 【缓冲模式】) ---
+async function runVercelAdvancedProxy_Buffer({ req, url, method, headers, body }) {
   try {
-    const { pipeline } = await import('node:stream/promises');
     const { gotScraping } = await import('got-scraping');
 
-    const headersToForward = { ...headers };
-    if (req.headers.cookie && !headersToForward.cookie) headersToForward.cookie = req.headers.cookie;
-    if (req.headers.referer && !headersToForward.referer) headersToForward.referer = req.headers.referer;
-
-    const proxyRequestStream = gotScraping.stream({
-      url,
+    const requestOptions = {
       method,
-      headers: headersToForward,
+      url,
       body: (method !== 'GET' && method !== 'HEAD') ? body : undefined,
+      headers: {
+        ...headers,
+        ...(req.headers.cookie && { 'cookie': req.headers.cookie }),
+        ...(req.headers.referer && { 'referer': req.headers.referer }),
+      },
+      responseType: 'buffer', // 关键: 采用缓冲模式以确保在 Vercel 上的稳定性
       throwHttpErrors: false,
-      timeout: { request: 60000 },
       headerGeneratorOptions: {
-        browsers: [{ name: pickRandom(SUPPORTED_BROWSERS), minVersion: 120 }],
+        browsers: [{ name: pickRandom(SUPPORTED_BROWSERS), minVersion: 110 }],
         devices: [pickRandom(SUPPORTED_DEVICES)],
         operatingSystems: [pickRandom(SUPPORTED_OS)],
-        locales: [pickRandom(SUPPORTED_LOCALES)],
       },
-    });
+      timeout: { request: 60000 },
+    };
 
-    // 关键：在收到目标响应头时，立刻将它们和CORS头写入自己的响应中
-    proxyRequestStream.on('response', (response) => {
-      res.statusCode = response.statusCode;
-      // 写入目标响应头，过滤掉无需转发的头
-      for (const [key, value] of Object.entries(response.headers)) {
-        if (['transfer-encoding', 'content-encoding'].includes(key.toLowerCase())) continue;
-        res.setHeader(key, value);
-      }
-      // 写入CORS头
-      for (const [key, value] of Object.entries(corsHeaders)) {
-        res.setHeader(key, value);
-      }
-    });
+    const response = await gotScraping(requestOptions);
 
-    // 将代理请求流完整地管道到服务器响应流
-    await pipeline(proxyRequestStream, res);
-
+    return {
+      statusCode: response.statusCode,
+      headers: response.headers,
+      body: response.body, // response.body 是一个 Buffer
+    };
   } catch (error) {
-    if (!res.headersSent) {
-      res.writeHead(502, { 'Content-Type': 'application/json', ...corsHeaders });
-      res.end(JSON.stringify({
-        engine: 'Vercel',
-        error: 'Proxy request failed.',
-        details: error.message,
-      }));
-    } else {
-      // 如果头已发送，只能尝试销毁流来结束请求
-      res.destroy();
-    }
+    return {
+      statusCode: 502,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ engine: 'Vercel', error: 'Proxy request failed.', details: error.message }),
+    };
   }
 }
 
 /**
  * 主入口函数，负责路由、鉴权、CORS和分发任务
- * @param {{ req: object, res?: object, platform: 'netlify' | 'vercel' }} options
+ * @param {{ req: object, platform: 'netlify' | 'vercel' }} options
+ * @returns {Promise<{statusCode: number, headers: object, body: Buffer|string}>}
  */
-export async function proxyCore({ req, res, platform }) {
+export async function proxyCore({ req, platform }) {
   // 1. 统一的 CORS 配置
   const CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
@@ -158,52 +152,45 @@ export async function proxyCore({ req, res, platform }) {
     'Access-Control-Allow-Headers': 'Content-Type, x-proxy-token',
   };
 
-  // 2. 统一处理 OPTIONS 预检请求
+  // 2. 统一处理 OPTIONS 预检请求 (由平台适配层处理，此处作为逻辑备份)
   if (req.method === 'OPTIONS') {
-    if (res) { // Vercel/Node 环境
-      res.writeHead(204, CORS_HEADERS).end();
-    } else { // Netlify 环境
-      return { statusCode: 204, headers: CORS_HEADERS };
-    }
-    return;
+    return { statusCode: 204, headers: CORS_HEADERS, body: '' };
   }
 
   // 3. 统一处理鉴权
-  const clientToken = req.headers['x-proxy-token'] || (req.query && req.query.token);
+  const clientToken = req.headers['x-proxy-token'] || (req.query && req.query.token) || (req.body && req.body.token);
   const envToken = process.env.PROXY_AUTH_TOKEN;
+
   if (envToken && clientToken !== envToken) {
-    const errorBody = JSON.stringify({ error: 'Unauthorized. Invalid or missing token.' });
-    const errorHeaders = { 'Content-Type': 'application/json', ...CORS_HEADERS };
-    if (res) {
-      res.writeHead(401, errorHeaders).end(errorBody);
-    } else {
-      return { statusCode: 401, body: errorBody, headers: errorHeaders };
-    }
-    return;
+    return {
+      statusCode: 401,
+      headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+      body: JSON.stringify({ error: 'Unauthorized. Invalid or missing token.' }),
+    };
   }
 
   // 4. 统一净化和验证负载
   const { payload, error } = getAndValidatePayload(req);
   if (error) {
-    const errorBody = JSON.stringify({ error });
-    const errorHeaders = { 'Content-Type': 'application/json', ...CORS_HEADERS };
-    if (res) {
-      res.writeHead(400, errorHeaders).end(errorBody);
-    } else {
-      return { statusCode: 400, body: errorBody, headers: errorHeaders };
-    }
-    return;
+    return {
+      statusCode: 400,
+      headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+      body: JSON.stringify({ error }),
+    };
   }
 
   // 5. 分发到特定平台的代理引擎
   const { url, method, headers, body } = payload;
+  let result;
+
   if (platform === 'netlify') {
-    const result = await runNetlifySimpleProxy({ req, url, method, headers, body });
-    // 为成功或失败的响应都附加 CORS 头
-    result.headers = { ...result.headers, ...CORS_HEADERS };
-    return result;
-  } else {
-    // Vercel 引擎内部已处理 CORS 头
-    await runVercelAdvancedProxy({ req, res, url, method, headers, body, corsHeaders: CORS_HEADERS });
+    result = await runNetlifySimpleProxy({ req, url, method, headers, body });
+  } else { // 'vercel' or local
+    result = await runVercelAdvancedProxy_Buffer({ req, url, method, headers, body });
   }
+
+  // 6. 为所有最终响应（无论成功或失败）附加 CORS 头
+  result.headers = { ...result.headers, ...CORS_HEADERS };
+
+  return result;
 }
