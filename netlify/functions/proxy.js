@@ -2,14 +2,14 @@
 import { proxyCore } from '../../proxyCore.js';
 
 export const handler = async (event) => {
-  // CORS
-  const headers = {
+  // CORS 头
+  const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type,x-proxy-token'
   };
   if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 204, headers };
+    return { statusCode: 204, headers: corsHeaders };
   }
 
   let src = {};
@@ -32,7 +32,7 @@ export const handler = async (event) => {
 
   return {
     statusCode: result.statusCode,
-    headers: { ...headers, ...result.headers },
+    headers: { ...corsHeaders, ...result.headers },
     body: result.body,
     isBase64Encoded: Buffer.isBuffer(result.body)
   };

@@ -1,7 +1,7 @@
 // proxyCore.js
 import { gotScraping } from 'got-scraping';
 
-// 指纹参数
+// 支持的指纹参数
 const SUPPORTED_BROWSERS = ['chrome', 'firefox', 'safari', 'edge'];
 const SUPPORTED_DEVICES = ['desktop', 'mobile'];
 const SUPPORTED_OS = ['windows', 'macos', 'linux', 'android', 'ios'];
@@ -20,9 +20,9 @@ export async function proxyCore({
   url,
   token,
   body = undefined,
-  envToken // 传递 process.env.PROXY_AUTH_TOKEN 或 context.env.PROXY_AUTH_TOKEN
+  envToken // process.env.PROXY_AUTH_TOKEN
 }) {
-  // 鉴权
+  // 1. 鉴权
   if (!token || token !== envToken) {
     return { statusCode: 401, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error: 'Unauthorized: Invalid or missing token.' }) };
   }
@@ -30,7 +30,7 @@ export async function proxyCore({
     return { statusCode: 400, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error: 'A valid "url" parameter is required.' }) };
   }
 
-  // 只允许 referer 和 cookie
+  // 2. 只允许 referer/cookie，类型兜底
   let filteredHeaders = {};
   try {
     if (isPlainObject(headers)) {
@@ -45,8 +45,9 @@ export async function proxyCore({
   filteredHeaders = Object.fromEntries(
     Object.entries(filteredHeaders).filter(([k]) => ['referer', 'cookie'].includes(k.toLowerCase()))
   );
+  if (!isPlainObject(filteredHeaders)) filteredHeaders = {};
 
-  // 指纹自动生成
+  // 3. 指纹自动生成
   const browser = pickRandom(SUPPORTED_BROWSERS);
   const device = pickRandom(SUPPORTED_DEVICES);
   const os = pickRandom(SUPPORTED_OS);
@@ -59,12 +60,12 @@ export async function proxyCore({
     locales: [locale]
   };
 
-  // got-scraping参数
+  // 4. got-scraping参数
   const options = {
     method,
     responseType: 'buffer',
     throwHttpErrors: false,
-    headers: isPlainObject(filteredHeaders) ? filteredHeaders : {},
+    headers: filteredHeaders,
     headerGeneratorOptions,
     timeout: { request: 20000 },
     retry: 0,
@@ -74,7 +75,7 @@ export async function proxyCore({
   try {
     const response = await gotScraping(url, options);
 
-    // 透传安全头
+    // 5. 透传安全头
     const passHeaders = {};
     const contentType = response.headers['content-type'] || 'application/octet-stream';
     passHeaders['content-type'] = contentType;
