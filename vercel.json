@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "pages/api/proxy.js": {
+      "memory": 1024,
+      "maxDuration": 30
+    }
+  }
+}
