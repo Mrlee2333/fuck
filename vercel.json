@@ -3,11 +3,7 @@
   "functions": {
     "pages/api/proxy.js": {
       "memory": 1024,
-      "maxDuration": 45,
-      "includeFiles": [
-        "node_modules/@sparticuz/chromium/build/**",
-        "node_modules/puppeteer-extra-plugin-stealth/**"
-      ]
+      "maxDuration": 45
     }
   }
 }
