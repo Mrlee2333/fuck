@@ -1,10 +1,9 @@
 // proxyCore.js
 
-// --- 辅助函数 ---
+// --- 指纹配置 ---
 
-// 用于随机选择指纹参数
-const SUPPORTED_BROWSERS = ['chrome', 'firefox', 'safari'];
-const SUPPORTED_OS = ['windows', 'macos', 'linux'];
+const SUPPORTED_BROWSERS = ['chrome', 'firefox', 'safari', 'edge'];
+const SUPPORTED_OS = ['windows', 'macos', 'linux', 'android', 'ios'];
 const SUPPORTED_DEVICES = ['desktop', 'mobile'];
 const SUPPORTED_LOCALES = ['en-US', 'en', 'zh-CN', 'ja-JP'];
 
@@ -12,7 +11,11 @@ function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-// 净化和验证客户端传入的参数
+function isPlainObject(val) {
+  return val && typeof val === 'object' && !Array.isArray(val);
+}
+
+// --- 参数净化 ---
 function getAndValidatePayload(req) {
   let rawPayload = {};
   if (req.method === 'POST') {
@@ -25,10 +28,11 @@ function getAndValidatePayload(req) {
   }
   const url = rawPayload.url;
   const method = (typeof rawPayload.method === 'string' ? rawPayload.method : 'GET').toUpperCase();
+  // 只允许 referer/cookie，且必须为字符串
   const headers = {};
   if (typeof rawPayload.headers === 'object' && rawPayload.headers !== null) {
     for (const [key, value] of Object.entries(rawPayload.headers)) {
-      if (typeof key === 'string' && typeof value === 'string') {
+      if (typeof key === 'string' && typeof value === 'string' && ['referer', 'cookie'].includes(key.toLowerCase())) {
         headers[key] = value;
       }
     }
@@ -37,14 +41,13 @@ function getAndValidatePayload(req) {
   if (typeof body === 'object' && body !== null) {
     body = JSON.stringify(body);
     if (method === 'POST' && !headers['content-type'] && !headers['Content-Type']) {
-        headers['Content-Type'] = 'application/json';
+      headers['Content-Type'] = 'application/json';
     }
   }
   return { payload: { url, method, headers, body } };
 }
 
-
-// --- Netlify 使用的 fetch 二进制增强代理 ---
+// --- Netlify 端流式、二进制资源安全代理 ---
 async function runNetlifySimpleProxy({ req, url, method, headers, body }) {
   try {
     const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
@@ -59,7 +62,7 @@ async function runNetlifySimpleProxy({ req, url, method, headers, body }) {
       body: (method !== 'GET' && method !== 'HEAD') ? body : undefined,
     });
 
-    // 移除 content-encoding
+    // 过滤 content-encoding
     const responseHeaders = {};
     response.headers.forEach((value, key) => {
       if (key.toLowerCase() !== 'content-encoding') {
@@ -67,13 +70,13 @@ async function runNetlifySimpleProxy({ req, url, method, headers, body }) {
       }
     });
 
-    // 用 arrayBuffer，支持图片、音视频等二进制
+    // 用 arrayBuffer，完美支持图片/音视频/大文件
     const buffer = Buffer.from(await response.arrayBuffer());
 
     return {
       statusCode: response.status,
       headers: responseHeaders,
-      body: buffer, // 上层代码判断 content-type 决定是否转 base64
+      body: buffer, // 由外层决定是否转 base64
     };
 
   } catch (error) {
@@ -85,59 +88,71 @@ async function runNetlifySimpleProxy({ req, url, method, headers, body }) {
   }
 }
 
-
-
-// --- Vercel 使用的 got-scraping 高级代理引擎 (增强版) ---
+// --- Vercel/本地：got-scraping流式极致兼容（支持所有文件、m3u8、视频、图片） ---
 async function runVercelAdvancedProxy({ req, res, url, method, headers, body }) {
-  console.log(`[Vercel Engine] Running advanced proxy: ${method} ${url}`);
   try {
     const { pipeline } = await import('node:stream/promises');
     const { gotScraping } = await import('got-scraping');
-    
     const headersToForward = { ...headers };
     if (req.headers.cookie && !headersToForward.Cookie && !headersToForward.cookie) headersToForward.Cookie = req.headers.cookie;
     if (req.headers.referer && !headersToForward.Referer && !headersToForward.referer) headersToForward.Referer = req.headers.referer;
 
-    // 【新增】增强的随机指纹配置
+    // 随机指纹
     const headerGeneratorOptions = {
-        browsers: [{ name: pickRandom(SUPPORTED_BROWSERS), minVersion: 120 }],
-        devices: [pickRandom(SUPPORTED_DEVICES)],
-        operatingSystems: [pickRandom(SUPPORTED_OS)],
-        locales: [pickRandom(SUPPORTED_LOCALES)],
+      browsers: [{ name: pickRandom(SUPPORTED_BROWSERS), minVersion: 120 }],
+      devices: [pickRandom(SUPPORTED_DEVICES)],
+      operatingSystems: [pickRandom(SUPPORTED_OS)],
+      locales: [pickRandom(SUPPORTED_LOCALES)],
     };
 
+    // gotScraping 流式输出，不缓存任何内容
     const proxyRequestStream = gotScraping.stream({
-        url: url,
-        method: method,
-        headers: headersToForward,
-        body: (method !== 'GET' && method !== 'HEAD') ? body : undefined,
-        headerGeneratorOptions: headerGeneratorOptions, // 应用增强指纹
-        timeout: { request: 60000 },
-        throwHttpErrors: false,
+      url,
+      method,
+      headers: headersToForward,
+      body: (method !== 'GET' && method !== 'HEAD') ? body : undefined,
+      headerGeneratorOptions,
+      timeout: { request: 60000 },
+      throwHttpErrors: false,
     });
-    
+
     proxyRequestStream.on('response', (response) => {
-        res.statusCode = response.statusCode;
-        for (const [key, value] of Object.entries(response.headers)) {
-            if (key.toLowerCase() !== 'transfer-encoding') res.setHeader(key, value);
-        }
+      res.statusCode = response.statusCode;
+      for (const [key, value] of Object.entries(response.headers)) {
+        // 过滤 transfer-encoding 和 content-encoding
+        if (key.toLowerCase() === 'transfer-encoding' || key.toLowerCase() === 'content-encoding') continue;
+        res.setHeader(key, value);
+      }
+      // 补充 CORS
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type,x-proxy-token');
     });
 
     await pipeline(proxyRequestStream, res);
 
   } catch (error) {
-    console.error('[Vercel Engine] got-scraping error:', error);
     if (!res.headersSent) {
       res.status(502).json({ engine: 'Vercel', error: 'Proxy request failed.', details: error.message });
     }
   }
 }
 
-// --- 主入口函数 (保持不变) ---
+// --- 主入口 ---
 export async function proxyCore({ req, res, platform }) {
   const query = req.query || {};
   const clientToken = req.headers['x-proxy-token'] || query.token;
   const envToken = process.env.PROXY_AUTH_TOKEN;
+
+  // CORS（Netlify 由外层加，Vercel直接加即可）
+  if (res) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,x-proxy-token');
+    if (req.method === 'OPTIONS') {
+      return res.status(204).end();
+    }
+  }
 
   if (envToken && clientToken !== envToken) {
     const errorBody = JSON.stringify({ error: 'Unauthorized. Invalid or missing token.' });
@@ -155,13 +170,13 @@ export async function proxyCore({ req, res, platform }) {
     }
     return res.status(400).json({ error });
   }
-  
+
   const { url, method, headers, body } = payload;
-  
+
   if (platform === 'netlify') {
     return await runNetlifySimpleProxy({ req, url, method, headers, body });
   } else {
-    // Vercel 和本地开发环境会走这里
+    // Vercel / 本地
     await runVercelAdvancedProxy({ req, res, url, method, headers, body });
   }
 }
