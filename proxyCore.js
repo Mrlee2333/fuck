@@ -1,10 +1,9 @@
 // proxyCore.js
-
 import chromium from '@sparticuz/chromium';
-// 【修复】直接导入 puppeteer-core
-import puppeteer from 'puppeteer-core';
+import puppeteer from 'puppeteer-extra';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 
-// 不再需要 'puppeteer-extra' 和 'StealthPlugin'
+puppeteer.use(StealthPlugin());
 
 export async function proxyCore({ req, res, platform }) {
   if (req.method === 'OPTIONS') {
