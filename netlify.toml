@@ -12,12 +12,9 @@
 # 3. Functions (函数) 通用配置
 [functions]
   node_bundler = "esbuild"
-  
-  # 【最终修复】
-  # 我们明确地将 got-scraping 和它需要数据文件的子依赖 header-generator
-  # 都标记为外部依赖。这会强制 Netlify 将这两个包的完整目录
-  # (包含所有 .js, .json, .zip 文件) 都上传到运行时环境。
-  external_node_modules = ["got-scraping", "header-generator"]
+  # 为 Puppeteer 增加函数内存和超时时间
+  memory = 1024
+  timeout = 30
 
 # 4. 重定向规则
 [[redirects]]

@@ -10,10 +10,12 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@sparticuz/chromium": "^137.0.1",
     "geist": "^1.4.2",
-    "got-scraping": "^4.1.1",
-    "header-generator": "^2.1.67",
     "next": "15.3.4",
+    "puppeteer-core": "^22.15.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
