@@ -3,8 +3,8 @@
   "functions": {
     "pages/api/proxy.js": {
       "memory": 1024,
-      "maxDuration": 60,
-      "includeFiles": ".local-chromium/**"
+      "maxDuration": 45,
+      "includeFiles": "node_modules/header-generator/data_files/**"
     }
   }
 }
