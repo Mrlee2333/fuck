@@ -1,13 +1,9 @@
 // scripts/vendor-puppeteer.js
-import fs from 'node:fs';
+import fs from 'fs-extra'; // 【修复】导入 fs-extra 模块
 import path from 'node:path';
 
-console.log('--- Starting Puppeteer dependency vendoring script ---');
+console.log('--- Starting Puppeteer dependency vendoring script (using fs-extra) ---');
 
-// 我们的 API 路由源文件目录
-const apiDir = path.join(process.cwd(), 'pages', 'api');
-
-// 将要“注入”的依赖包
 const packagesToVendor = [
   '@sparticuz/chromium',
   'puppeteer-extra',
@@ -15,24 +11,18 @@ const packagesToVendor = [
 ];
 
 packagesToVendor.forEach(pkg => {
-  // 源目录：项目根目录的 node_modules
   const sourceDir = path.join(process.cwd(), 'node_modules', pkg);
-  // 目标目录：API 目录下的 node_modules
-  const destDir = path.join(apiDir, 'node_modules', pkg);
+  const destDir = path.join(process.cwd(), 'pages', 'api', 'node_modules', pkg);
 
   if (!fs.existsSync(sourceDir)) {
-    console.warn(`Warning: Source package not found at "${sourceDir}". Skipping.`);
+    console.warn(`Warning: Source package not found: "${sourceDir}". Skipping.`);
     return;
   }
-  
+
   try {
-    // 强制清空并重新创建目标目录
-    fs.rmSync(destDir, { recursive: true, force: true });
-    fs.mkdirSync(destDir, { recursive: true });
-    
-    // 复制整个包
-    fs.cpSync(sourceDir, destDir, { recursive: true });
-    console.log(`Successfully vendored ${pkg}`);
+    // 【修复】使用 fs-extra 的 copySync。它会自动处理目录创建、清理和符号链接。
+    fs.copySync(sourceDir, destDir);
+    console.log(`Successfully vendored ${pkg} with fs-extra.`);
   } catch (err) {
     console.error(`Error vendoring ${pkg}: ${err}`);
     process.exit(1);
