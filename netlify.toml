@@ -1,19 +1,29 @@
 # netlify.toml
 
-# 针对所有 functions 的通用配置
+# 1. 构建配置
+#    为 Next.js 项目指定构建命令和发布目录
+[build]
+  command = "next build"
+  publish = ".next"
+
+# 2. 环境变量
+#    在这里设置 Node.js 版本是正确的方式
+[build.environment]
+  NODE_VERSION = "20"
+
+# 3. Functions (函数) 通用配置
 [functions]
   node_bundler = "esbuild"
-  # 指定一个支持ESM的较新Node版本
-  node_version = 20 
 
+# 4. 针对 'proxy' 函数的特殊配置
+#    将 'got-scraping' 排除在打包之外，解决 ESM 依赖问题
+[[functions.proxy]]
+  external_node_modules = ["got-scraping"]
+
+# 5. 重定向规则
+#    将前端路径 /api/proxy 指向 Netlify 函数
 [[redirects]]
   from = "/api/proxy"
   to = "/.netlify/functions/proxy"
   status = 200
   force = true
-
-# 针对 proxy function 的特殊配置
-[[functions.proxy]]
-  # 【关键】将这些模块排除在打包过程之外
-  # 让运行时环境直接加载它们
-  external_node_modules = ["got-scraping"]

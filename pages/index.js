@@ -1,17 +1,13 @@
+// pages/index.js
+
 import Head from "next/head";
 import Image from "next/image";
-import { Geist, Geist_Mono } from "next/font/google";
+// 【修复】从正确的 'geist' 包中导入字体
+import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
 import styles from "@/styles/Home.module.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+// 不再需要在这里调用和配置字体，导入时已完成
 
 export default function Home() {
   return (
@@ -22,8 +18,9 @@ export default function Home() {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="icon" href="/favicon.ico" />
       </Head>
+      {/* 【修复】直接使用 .className 应用字体 */}
       <div
-        className={`${styles.page} ${geistSans.variable} ${geistMono.variable}`}
+        className={`${styles.page} ${GeistSans.className} ${GeistMono.className}`}
       >
         <main className={styles.main}>
           <Image
