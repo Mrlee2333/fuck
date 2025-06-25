@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "vercel-build": "node scripts/copy-vercel-files.js",
     "start": "next start",
     "lint": "next lint"
   },
