@@ -21,7 +21,9 @@ export const handler = async (event) => {
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type,x-proxy-token',
   };
-
+  if (event.httpMethod === 'OPTIONS') {
+    return { statusCode: 204, headers: corsHeaders };
+  }
   const contentType = headers['content-type'] || headers['Content-Type'] || '';
   let isBase64Encoded = false;
   let body = coreResult.body;
