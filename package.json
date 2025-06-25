@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
-    "build": "node scripts/vendor-puppeteer.js && next build",
+    "build": "next build",
     "start": "next start",
     "lint": "next lint"
   },
@@ -13,9 +13,7 @@
     "@sparticuz/chromium": "^137.0.1",
     "geist": "^1.4.2",
     "next": "15.3.4",
-    "puppeteer-core": "^22.0.0",
-    "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "puppeteer-core": "^24.10.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

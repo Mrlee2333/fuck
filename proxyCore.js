@@ -1,9 +1,6 @@
 // proxyCore.js
 import chromium from '@sparticuz/chromium';
-import puppeteer from 'puppeteer-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
-
-puppeteer.use(StealthPlugin());
+import puppeteer from 'puppeteer-core'; // 直接使用 puppeteer-core
 
 export async function proxyCore({ req, res, platform }) {
   if (req.method === 'OPTIONS') {
@@ -11,7 +8,7 @@ export async function proxyCore({ req, res, platform }) {
     return;
   }
 
-  const query = platform === 'netlify' ? req.queryStringParameters || {} : req.query || {};
+  const query = req.query || {};
   const { url, token: queryToken } = query;
 
   const clientToken = req.headers['x-proxy-token'] || queryToken;
@@ -30,12 +27,13 @@ export async function proxyCore({ req, res, platform }) {
 
   let browser = null;
   try {
-    // 【修复】直接使用 puppeteer.launch，不再有 .use(StealthPlugin())
+    console.log('Launching browser with @sparticuz/chromium...');
     browser = await puppeteer.launch({
       args: chromium.args,
       executablePath: await chromium.executablePath(),
       headless: chromium.headless,
     });
+    console.log('Browser launched successfully.');
 
     const page = await browser.newPage();
     
@@ -48,11 +46,13 @@ export async function proxyCore({ req, res, platform }) {
       await page.setExtraHTTPHeaders({ Cookie: req.headers.cookie });
     }
     
+    console.log(`Navigating to: ${url}`);
     const response = await page.goto(url, {
       waitUntil: 'domcontentloaded',
       timeout: 60000,
       headers: headersToForward,
     });
+    console.log(`Navigation successful. Status: ${response.status()}`);
 
     const status = response.status();
     const headers = response.headers();
@@ -61,24 +61,21 @@ export async function proxyCore({ req, res, platform }) {
     const passHeaders = {
       'Content-Type': headers['content-type'] || 'application/octet-stream',
       'Content-Length': body.length.toString(),
-      'Cache-Control': headers['cache-control'] || 'public, max-age=604800',
     };
-    ['content-disposition', 'accept-ranges', 'content-range'].forEach(h => {
-        if (headers[h]) passHeaders[h] = headers[h];
-    });
-
+    
     res.writeHead(status, passHeaders);
     res.end(body);
 
   } catch (error) {
-    console.error('Puppeteer error:', error);
+    console.error('Puppeteer core error:', error);
     if (!res.headersSent) {
       res.writeHead(502, { 'Content-Type': 'application/json' });
     }
-    res.end(JSON.stringify({ error: 'Proxy request failed.', details: error.message }));
+    res.end(JSON.stringify({ error: 'Proxy request failed at core level.', details: error.message }));
   } finally {
     if (browser !== null) {
       await browser.close();
+      console.log('Browser closed.');
     }
   }
 }
