@@ -89,10 +89,13 @@ async function runNetlifySimpleProxy({ req, url, method, headers, body }) {
 }
 
 // --- Vercel/本地：got-scraping流式极致兼容（支持所有文件、m3u8、视频、图片） ---
+
 async function runVercelAdvancedProxy({ req, res, url, method, headers, body }) {
   try {
     const { pipeline } = await import('node:stream/promises');
     const { gotScraping } = await import('got-scraping');
+
+    // 合并前端headers和真实请求头，只允许 referer/cookie
     const headersToForward = { ...headers };
     if (req.headers.cookie && !headersToForward.Cookie && !headersToForward.cookie) headersToForward.Cookie = req.headers.cookie;
     if (req.headers.referer && !headersToForward.Referer && !headersToForward.referer) headersToForward.Referer = req.headers.referer;
@@ -105,7 +108,7 @@ async function runVercelAdvancedProxy({ req, res, url, method, headers, body }) 
       locales: [pickRandom(SUPPORTED_LOCALES)],
     };
 
-    // gotScraping 流式输出，不缓存任何内容
+    // gotScraping 流式代理，任何内容类型都自动pipe
     const proxyRequestStream = gotScraping.stream({
       url,
       method,
@@ -116,27 +119,35 @@ async function runVercelAdvancedProxy({ req, res, url, method, headers, body }) 
       throwHttpErrors: false,
     });
 
+    // 流式响应事件处理
     proxyRequestStream.on('response', (response) => {
+      // 1. 设置所有安全头，过滤 transfer-encoding, content-encoding（防止浏览器解码失败）
       res.statusCode = response.statusCode;
       for (const [key, value] of Object.entries(response.headers)) {
-        // 过滤 transfer-encoding 和 content-encoding
-        if (key.toLowerCase() === 'transfer-encoding' || key.toLowerCase() === 'content-encoding') continue;
+        if (['transfer-encoding', 'content-encoding'].includes(key.toLowerCase())) continue;
         res.setHeader(key, value);
       }
-      // 补充 CORS
+      // 2. 补充 CORS 头（让图片/视频/音频/流媒体都能跨域用）
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type,x-proxy-token');
     });
 
+    // 3. stream 方式，超大资源/流媒体也不会溢出
     await pipeline(proxyRequestStream, res);
 
   } catch (error) {
+    // 响应未写出时返回错误
     if (!res.headersSent) {
-      res.status(502).json({ engine: 'Vercel', error: 'Proxy request failed.', details: error.message });
+      res.status(502).json({
+        engine: 'Vercel',
+        error: 'Proxy request failed.',
+        details: error.message
+      });
     }
   }
 }
+
 
 // --- 主入口 ---
 export async function proxyCore({ req, res, platform }) {
@@ -180,4 +191,5 @@ export async function proxyCore({ req, res, platform }) {
     await runVercelAdvancedProxy({ req, res, url, method, headers, body });
   }
 }
+
 
