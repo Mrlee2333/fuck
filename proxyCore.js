@@ -1,11 +1,10 @@
 // proxyCore.js
 
-// 【修复】导入新的 @sparticuz/chromium 包
 import chromium from '@sparticuz/chromium';
-import puppeteer from 'puppeteer-extra';
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+// 【修复】直接导入 puppeteer-core
+import puppeteer from 'puppeteer-core';
 
-puppeteer.use(StealthPlugin());
+// 不再需要 'puppeteer-extra' 和 'StealthPlugin'
 
 export async function proxyCore({ req, res, platform }) {
   if (req.method === 'OPTIONS') {
@@ -32,15 +31,16 @@ export async function proxyCore({ req, res, platform }) {
 
   let browser = null;
   try {
+    // 【修复】直接使用 puppeteer.launch，不再有 .use(StealthPlugin())
     browser = await puppeteer.launch({
-      // 【修复】使用新的 chromium 包提供的参数和路径
       args: chromium.args,
-      executablePath: await chromium.executablePath(), // 注意这里是函数调用
+      executablePath: await chromium.executablePath(),
       headless: chromium.headless,
     });
 
     const page = await browser.newPage();
     
+    // 转发 Referer 和 Cookie
     const headersToForward = {};
     if (req.headers.referer) {
       headersToForward.Referer = req.headers.referer;
@@ -76,7 +76,7 @@ export async function proxyCore({ req, res, platform }) {
     if (!res.headersSent) {
       res.writeHead(502, { 'Content-Type': 'application/json' });
     }
-    res.end(JSON.stringify({ error: 'Proxy request failed with modern module.', details: error.message }));
+    res.end(JSON.stringify({ error: 'Proxy request failed.', details: error.message }));
   } finally {
     if (browser !== null) {
       await browser.close();
