@@ -2,7 +2,9 @@
 
 # 1. 构建配置
 [build]
-  command = "next build"
+  # 【关键修复】将文件复制命令和 next build 命令在这里串联
+  # 这个命令会覆盖 package.json 中的 build 命令，且仅在 Netlify 生效
+  command = "node scripts/copy-files.js && next build"
   publish = ".next"
 
 # 2. 环境变量
@@ -12,11 +14,6 @@
 # 3. Functions (函数) 通用配置
 [functions]
   node_bundler = "esbuild"
-  
-  # 【最终修复】
-  # 路径已更正为 header-generator 包的根目录下的 data_files 目录。
-  # "/**" 通配符会包含该目录下的所有文件 (json, zip 等)。
-  included_files = ["node_modules/header-generator/data_files/**"]
 
 # 4. 重定向规则
 [[redirects]]
