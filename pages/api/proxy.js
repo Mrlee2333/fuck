@@ -1,22 +1,30 @@
-// pages/api/proxy.js
-
 import { gotScraping } from 'got-scraping';
 
-// 支持的浏览器/设备/系统白名单
-const SUPPORTED_BROWSERS = ['chrome', 'firefox', 'safari'];
+// 指纹和设备等白名单
+const SUPPORTED_BROWSERS = ['chrome', 'firefox', 'safari', 'edge'];
 const SUPPORTED_DEVICES = ['desktop', 'mobile'];
 const SUPPORTED_OS = ['windows', 'macos', 'linux', 'android', 'ios'];
+const SUPPORTED_LOCALES = ['en-US', 'zh-CN', 'zh-TW', 'en-GB', 'ja-JP', 'ko-KR', 'fr-FR', 'de-DE', 'ru-RU', 'es-ES'];
+const SUPPORTED_HTTP_VERSIONS = ['1', '2'];
+const SUPPORTED_SEC_CH_UA_MODELS = [
+  'SM-G991B', 'iPhone', 'Pixel 6', 'Redmi Note 10', 'Mi 11', 'OnePlus9', 'VOG-L29', 'M2012K11AC'
+];
+const SUPPORTED_PLATFORMS = ['Win32', 'Linux x86_64', 'MacIntel', 'Android', 'iPhone'];
+const SUPPORTED_SCREEN_SIZES = [
+  { width: 1920, height: 1080 },
+  { width: 1366, height: 768 },
+  { width: 1280, height: 800 },
+  { width: 375, height: 812 },
+  { width: 414, height: 896 },
+  { width: 360, height: 800 },
+];
 
-// 随机取一个工具函数
 function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
-
 function isPlainObject(val) {
   return val && typeof val === 'object' && !Array.isArray(val);
 }
-
-// token 校验
 function isAuthorized(req) {
   const token =
     req.headers['x-proxy-token'] ||
@@ -24,8 +32,6 @@ function isAuthorized(req) {
     req.body?.token;
   return token === process.env.PROXY_AUTH_TOKEN;
 }
-
-// 兼容 GET/POST 获取参数
 function getParam(req, key, fallback = undefined) {
   if (req.method === 'GET') return req.query[key] ?? fallback;
   if (req.method === 'POST') return req.body?.[key] ?? fallback;
@@ -33,19 +39,15 @@ function getParam(req, key, fallback = undefined) {
 }
 
 export default async function handler(req, res) {
-  // CORS 头
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type,x-proxy-token');
-
   if (req.method === 'OPTIONS') return res.status(204).end();
 
-  // 1. 身份认证
   if (!isAuthorized(req)) {
     return res.status(401).json({ error: 'Unauthorized: Invalid or missing token.' });
   }
 
-  // 2. 获取参数
   const isPost = req.method === 'POST';
   const src = isPost ? req.body : req.query;
   const method = (isPost ? req.body?.method : req.query.method || 'GET').toUpperCase();
@@ -54,7 +56,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'A valid "url" parameter is required.' });
   }
 
-  // 3. 解析前端自定义 headers（只允许 cookie、referer）
+  // 只允许前端自定义 cookie 和 referer
   let customHeaders = {};
   try {
     const h = getParam(req, 'headers');
@@ -69,25 +71,57 @@ export default async function handler(req, res) {
   } catch {
     customHeaders = {};
   }
-  // 只保留 cookie 和 referer（其他一律不透传）
   const allowedHeaderKeys = ['cookie', 'referer'];
   customHeaders = Object.fromEntries(
     Object.entries(customHeaders).filter(([k]) => allowedHeaderKeys.includes(k.toLowerCase()))
   );
 
-  // 4. 指纹伪装：自动随机 browser/device/os
+  // 动态指纹
   const browser = pickRandom(SUPPORTED_BROWSERS);
   const device = pickRandom(SUPPORTED_DEVICES);
   const os = pickRandom(SUPPORTED_OS);
+  const locale = pickRandom(SUPPORTED_LOCALES);
+  const httpVersion = pickRandom(SUPPORTED_HTTP_VERSIONS);
+  const secChUaModel = pickRandom(SUPPORTED_SEC_CH_UA_MODELS);
+  const platform = pickRandom(SUPPORTED_PLATFORMS);
+  const screen = pickRandom(SUPPORTED_SCREEN_SIZES);
 
-  // 保证 headerGeneratorOptions 全是正确类型
   const headerGeneratorOptions = {
     browsers: [{ name: browser, minVersion: 110 }],
     devices: [device],
     operatingSystems: [os],
+    locales: [locale],
+    httpVersion,
+    ...(device === 'mobile' ? { secChUaModel: [secChUaModel] } : {}),
+    platform,
+    acceptLanguage: locale,
+    screen: [screen],
   };
 
-  // 5. 构建 gotScraping 配置，类型全安全
+  // 支持 socks5/http(s) 代理参数
+  let agent = undefined;
+  try {
+    const proxyType = getParam(req, 'proxyType'); // 'socks' | 'http' | 'https'
+    const proxyHost = getParam(req, 'proxyHost');
+    const proxyPort = getParam(req, 'proxyPort');
+    const proxyUsername = getParam(req, 'proxyUsername');
+    const proxyPassword = getParam(req, 'proxyPassword');
+    if (proxyType && proxyHost && proxyPort) {
+      // got-scraping 支持 http(s)/socks 代理（需安装 'socks-proxy-agent'）
+      let proxyUrl = '';
+      if (proxyType === 'socks') {
+        proxyUrl = `socks5://${proxyUsername ? `${proxyUsername}:${proxyPassword}@` : ''}${proxyHost}:${proxyPort}`;
+      } else {
+        proxyUrl = `${proxyType}://${proxyUsername ? `${proxyUsername}:${proxyPassword}@` : ''}${proxyHost}:${proxyPort}`;
+      }
+      // 动态加载 agent（只要用到才 require，兼容服务端/无 agent 时不报错）
+      const { default: ProxyAgent } = await import('proxy-agent');
+      agent = new ProxyAgent(proxyUrl);
+    }
+  } catch (e) {
+    agent = undefined;
+  }
+
   const options = {
     method,
     responseType: 'buffer',
@@ -96,16 +130,11 @@ export default async function handler(req, res) {
     headerGeneratorOptions,
     timeout: { request: 20000 },
     retry: 0,
+    ...(agent ? { agent } : {})
   };
 
-  // 防呆日志，调试可打开
-  // console.log('Proxy options', options);
-
-  // 6. 发起请求
   try {
     const response = await gotScraping(targetUrl, options);
-
-    // 7. 响应头安全透传
     const contentType = response.headers['content-type'] || 'application/octet-stream';
     res.setHeader('Content-Type', contentType);
     [
@@ -119,9 +148,7 @@ export default async function handler(req, res) {
     });
 
     res.status(response.statusCode).send(response.body);
-
   } catch (error) {
-    // 8. 错误捕获
     console.error('[PROXY_ERROR]', error);
     res.status(502).json({ error: 'Proxy request failed.', details: error.message });
   }

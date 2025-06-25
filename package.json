@@ -11,12 +11,13 @@
   "dependencies": {
     "got-scraping": "^4.1.1",
     "next": "15.3.4",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "proxy-agent": "^6.5.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
   },
   "devDependencies": {
-    "@eslint/eslintrc": "^3",
-    "eslint": "^9",
+    "@eslint/eslintrc": "^3.3.1",
+    "eslint": "^9.29.0",
     "eslint-config-next": "15.3.4"
   }
 }
