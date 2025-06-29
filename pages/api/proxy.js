@@ -2,9 +2,19 @@
 
 import { proxyCore } from '../../proxyCore.js';
 
+// 包含 CORS 所需头部的白名单
 function filterHeaders(originalHeaders) {
     const filtered = {};
-    const whitelist = ['content-type', 'content-length', 'content-disposition', 'cache-control', 'accept-ranges'];
+    const whitelist = [
+        'content-type',
+        'content-length',
+        'content-disposition',
+        'cache-control',
+        'accept-ranges',
+        'access-control-allow-origin',
+        'access-control-allow-methods',
+        'access-control-allow-headers'
+    ];
     for (const key in originalHeaders) {
         if (whitelist.includes(key.toLowerCase())) {
             filtered[key] = originalHeaders[key];
@@ -14,16 +24,13 @@ function filterHeaders(originalHeaders) {
 }
 
 export default async function handler(req, res) {
-  // 1. 委托给核心模块处理
-  // 注意：我们不再传递 res 对象
-  const coreResult = await proxyCore({ req, platform: 'vercel' });
-  
-  // 2. 将返回的结果写入响应
-  const responseHeaders = filterHeaders(coreResult.headers);
-  
-  // Vercel/Node的res.writeHead可以一次性设置状态码和头
-  res.writeHead(coreResult.statusCode, responseHeaders);
-  
-  // res.end 可以安全地处理 Buffer 或字符串
-  res.end(coreResult.body);
+    // 1. 调用核心代理逻辑
+    const coreResult = await proxyCore({ req, platform: 'vercel' });
+
+    // 2. 过滤并写入响应头（包含 CORS 头部）
+    const responseHeaders = filterHeaders(coreResult.headers);
+
+    // 3. 返回响应（支持 Buffer 或字符串）
+    res.writeHead(coreResult.statusCode, responseHeaders);
+    res.end(coreResult.body);
 }
