@@ -156,7 +156,7 @@ async function runNetlifySimpleProxy({ req, url, method, headers, body }) {
   }
 }
 
-// --- v1 Vercel 轻量化代理引擎 (基于原生 fetch，优化 HTTP 资源支持) ---
+// --- v1 Vercel 轻量化流式代理引擎 (支持断点续传，大文件友好) ---
 async function runVercelV1LightProxy({ req, url, method, headers, body }) {
   try {
     const isMedia = isMediaResource(url);
@@ -173,49 +173,51 @@ async function runVercelV1LightProxy({ req, url, method, headers, body }) {
     
     // HTTP 资源专用配置
     if (isHttp) {
-      // 移除可能导致问题的安全头部
       requestHeaders.delete('upgrade-insecure-requests');
       requestHeaders.delete('sec-fetch-site');
       requestHeaders.delete('sec-fetch-mode');
       requestHeaders.delete('sec-fetch-user');
       requestHeaders.delete('sec-fetch-dest');
-      
-      // 添加兼容性头部
-      requestHeaders.set('Accept-Encoding', 'gzip, deflate'); // 不包含 br
+      requestHeaders.set('Accept-Encoding', 'gzip, deflate');
       requestHeaders.set('Connection', 'keep-alive');
     } else {
       requestHeaders.set('Accept-Encoding', 'gzip, deflate, br');
     }
     
+    // 断点续传支持 - 传递客户端的 Range 头部
+    if (req.headers.range) {
+      requestHeaders.set('Range', req.headers.range);
+    }
+    
     // 媒体资源专用头部
     if (isMedia) {
       requestHeaders.set('Accept', mimeType || '*/*');
-      if (req.headers.range) {
-        requestHeaders.set('Range', req.headers.range);
+      // 大文件优化：支持部分内容请求
+      if (!req.headers.range) {
+        requestHeaders.set('Accept-Ranges', 'bytes');
       }
     } else {
       requestHeaders.set('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8');
     }
     
-    // 继承原有 cookie 和 referer（但要注意 HTTP/HTTPS 混合）
+    // 继承原有 cookie 和 referer
     if (req.headers.cookie && !requestHeaders.has('cookie')) {
       requestHeaders.set('Cookie', req.headers.cookie);
     }
     if (req.headers.referer && !requestHeaders.has('referer')) {
-      // 如果目标是 HTTP，且 referer 是 HTTPS，可能需要处理
       const referer = req.headers.referer;
       if (!(isHttp && referer.startsWith('https://'))) {
         requestHeaders.set('Referer', referer);
       }
     }
 
-    // fetch 配置 - 针对 HTTP 资源优化
+    // fetch 配置 - 流式处理，不设置超时让流自然传输
     const fetchOptions = {
       method,
       headers: requestHeaders,
       body: (method !== 'GET' && method !== 'HEAD') ? body : undefined,
       redirect: 'follow',
-      signal: AbortSignal.timeout(isMedia ? 60000 : 15000),
+      // 移除超时限制，让大文件可以完整传输
     };
 
     const response = await fetch(url, fetchOptions);
@@ -224,11 +226,29 @@ async function runVercelV1LightProxy({ req, url, method, headers, body }) {
     const responseHeaders = {};
     response.headers.forEach((value, key) => {
       const lowerKey = key.toLowerCase();
-      // 移除可能导致问题的头部
-      if (!['content-encoding', 'transfer-encoding', 'strict-transport-security'].includes(lowerKey)) {
+      // 保留流式传输必需的头部
+      if (!['transfer-encoding', 'strict-transport-security'].includes(lowerKey)) {
         responseHeaders[key] = value;
       }
     });
+
+    // 流式传输关键头部处理
+    if (isMedia || response.headers.get('content-length')) {
+      // 保持原始的 content-length 用于断点续传
+      const contentLength = response.headers.get('content-length');
+      if (contentLength) {
+        responseHeaders['Content-Length'] = contentLength;
+      }
+      
+      // 支持 Range 请求
+      responseHeaders['Accept-Ranges'] = 'bytes';
+      
+      // 保持 Content-Range 用于断点续传响应
+      const contentRange = response.headers.get('content-range');
+      if (contentRange) {
+        responseHeaders['Content-Range'] = contentRange;
+      }
+    }
 
     // v1 专用响应头设置
     if (isMedia) {
@@ -238,11 +258,8 @@ async function runVercelV1LightProxy({ req, url, method, headers, body }) {
     
     // HTTP 资源的特殊处理
     if (isHttp) {
-      // 确保不会有 HTTPS 相关的安全头部
       delete responseHeaders['strict-transport-security'];
       delete responseHeaders['content-security-policy'];
-      
-      // 添加允许混合内容的头部
       responseHeaders['X-Content-Type-Options'] = 'nosniff';
     }
     
@@ -251,13 +268,12 @@ async function runVercelV1LightProxy({ req, url, method, headers, body }) {
       responseHeaders['Content-Type'] = mimeType;
     }
 
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
+    // 关键改动：直接返回响应流，不等待完整下载
     return {
       statusCode: response.status,
       headers: responseHeaders,
-      body: buffer,
+      body: response.body, // 返回 ReadableStream 而不是 Buffer
+      isStream: true, // 标记为流式响应
     };
   } catch (error) {
     const isTimeout = error.name === 'TimeoutError' || error.message.includes('timeout');
@@ -272,9 +288,10 @@ async function runVercelV1LightProxy({ req, url, method, headers, body }) {
         details: error.message,
         isMedia: isMediaResource(url),
         isHttp: url.startsWith('http://'),
-        httpSupport: true,
+        streamSupport: true,
         suggestion: isHttpError ? 'HTTP resources may have connectivity issues' : null
       }),
+      isStream: false,
     };
   }
 }
