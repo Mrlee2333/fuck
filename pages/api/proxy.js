@@ -10,10 +10,16 @@ function filterHeaders(originalHeaders) {
         'content-length',
         'content-disposition',
         'cache-control',
+        'cdn-cache-control',
+        'vercel-cache-tags',
         'accept-ranges',
         'access-control-allow-origin',
         'access-control-allow-methods',
-        'access-control-allow-headers'
+        'access-control-allow-headers',
+        'vary',
+        'etag',
+        'last-modified',
+        'expires'
     ];
     for (const key in originalHeaders) {
         if (whitelist.includes(key.toLowerCase())) {
